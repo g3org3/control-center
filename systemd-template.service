@@ -1,0 +1,14 @@
+[Unit]
+Description=__NAME__ service
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PATH__
+ExecStart=/usr/bin/python3 -m http.server __PORT__
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
