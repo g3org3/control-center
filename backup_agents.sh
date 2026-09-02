@@ -52,6 +52,9 @@ PATHS=(
   .claude/backups
   .claude/plugins/installed_plugins.json
   .claude/plugins/known_marketplaces.json
+  .claude/plugins/marketplaces            # cloned marketplace repos (re-fetchable, small)
+  .claude/plugins/data                    # plugin state, not reinstallable
+  .claude/plugins/plugin-catalog-cache.json
 
   # --- Codex ---------------------------------------------------------------
   .codex/sessions                       # rollout transcripts, by date
@@ -71,11 +74,14 @@ PATHS=(
   .pi/agent/sessions
   .pi/agent/projects-memory             # per-project memory
   .pi/agent/pi-hermes-memory            # MEMORY.md / USER.md / failures.md
+  .pi/agent/extensions                  # user-written .ts extensions, not reinstallable
   .pi/agent/skills                      # relative symlinks into .agents/skills
   .pi/agent/settings.json
   .pi/agent/models.json
   .pi/agent/trust.json
   .pi/agent/run-history.jsonl
+  .pi/agent/npm/package.json            # extension manifests (node_modules itself skipped)
+  .pi/agent/npm/package-lock.json
 
   # --- hermes --------------------------------------------------------------
   .hermes/memories                      # MEMORY.md / USER.md
