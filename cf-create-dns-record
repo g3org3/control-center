@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Create a Cloudflare DNS record.
+
+Required env:
+  CLOUDFLARE_TOKEN
+
+Examples:
+  cf-create-dns-record jagc.app monit A 159.223.101.184 --ttl 300 --no-proxy
+  cf-create-dns-record jagc.app app CNAME example.com --ttl 300 --proxy
+  cf-create-dns-record jagc.app @ A 1.2.3.4 --ttl 300 --no-proxy
+
+Notes:
+  - NAME can be a short subdomain (monit), FQDN (monit.jagc.app), or @ for the apex.
+  - Default behavior refuses to overwrite an existing record. Use --update-existing to update matching type/name records.
+"""
+import argparse
+import json
+import os
+import urllib.parse
+import urllib.request
+import urllib.error
+
+
+def cf_request(path, token, method="GET", params=None, payload=None):
+    url = "https://api.cloudflare.com/client/v4" + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise SystemExit(f"Cloudflare API error HTTP {e.code}: {body}")
+    if not out.get("success"):
+        raise SystemExit("Cloudflare API error: " + json.dumps(out.get("errors"), indent=2))
+    return out
+
+
+def zone_id_for_name(token, zone_name):
+    data = cf_request("/zones", token, params={"name": zone_name})
+    zones = data.get("result", [])
+    if not zones:
+        raise SystemExit(f"No Cloudflare zone found for {zone_name}")
+    return zones[0]["id"]
+
+
+def normalize_name(name, zone):
+    if name == "@":
+        return zone
+    if name.endswith("." + zone) or name == zone:
+        return name
+    return f"{name}.{zone}"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Create or update a Cloudflare DNS record")
+    parser.add_argument("zone", help="zone name, e.g. jagc.app")
+    parser.add_argument("name", help="record name: short name, FQDN, or @")
+    parser.add_argument("type", help="record type, e.g. A, AAAA, CNAME, TXT, MX")
+    parser.add_argument("content", help="record content, e.g. IP address or target")
+    parser.add_argument("--ttl", type=int, default=300, help="TTL in seconds; use 1 for auto; default 300")
+    proxy_group = parser.add_mutually_exclusive_group()
+    proxy_group.add_argument("--proxy", action="store_true", help="enable Cloudflare proxy")
+    proxy_group.add_argument("--no-proxy", action="store_true", help="disable Cloudflare proxy")
+    parser.add_argument("--priority", type=int, help="priority for MX/SRV records")
+    parser.add_argument("--comment", help="optional Cloudflare record comment")
+    parser.add_argument("--update-existing", action="store_true", help="update existing matching type/name record instead of failing")
+    args = parser.parse_args()
+
+    token = os.environ.get("CLOUDFLARE_TOKEN")
+    if not token:
+        raise SystemExit("Missing CLOUDFLARE_TOKEN environment variable")
+
+    record_type = args.type.upper()
+    fqdn = normalize_name(args.name, args.zone)
+    proxied = True if args.proxy else False if args.no_proxy else False
+
+    zone_id = zone_id_for_name(token, args.zone)
+
+    existing = cf_request(
+        f"/zones/{zone_id}/dns_records",
+        token,
+        params={"type": record_type, "name": fqdn, "per_page": 100},
+    ).get("result", [])
+
+    payload = {
+        "type": record_type,
+        "name": fqdn,
+        "content": args.content,
+        "ttl": args.ttl,
+    }
+    if record_type in {"A", "AAAA", "CNAME"}:
+        payload["proxied"] = proxied
+    if args.priority is not None:
+        payload["priority"] = args.priority
+    if args.comment:
+        payload["comment"] = args.comment
+
+    if existing and not args.update_existing:
+        print(f"Matching {record_type} record(s) already exist for {fqdn}:")
+        for r in existing:
+            ttl = "auto" if r.get("ttl") == 1 else r.get("ttl")
+            print(f"  id={r.get('id')} content={r.get('content')} ttl={ttl} proxied={r.get('proxied')}")
+        raise SystemExit("Use --update-existing to update the first matching record, or choose another name/type.")
+
+    if existing:
+        record_id = existing[0]["id"]
+        data = cf_request(f"/zones/{zone_id}/dns_records/{record_id}", token, method="PUT", payload=payload)
+        action = "Updated"
+    else:
+        data = cf_request(f"/zones/{zone_id}/dns_records", token, method="POST", payload=payload)
+        action = "Created"
+
+    r = data["result"]
+    ttl = "auto" if r.get("ttl") == 1 else r.get("ttl")
+    print(f"{action} DNS record:")
+    print(f"  id: {r.get('id')}")
+    print(f"  type: {r.get('type')}")
+    print(f"  name: {r.get('name')}")
+    print(f"  content: {r.get('content')}")
+    print(f"  ttl: {ttl}")
+    print(f"  proxied: {r.get('proxied')}")
+
+
+if __name__ == "__main__":
+    main()
